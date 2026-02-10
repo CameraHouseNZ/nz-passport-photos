@@ -52,7 +52,7 @@ const App: React.FC = () => {
           createOrder: (_data: any, actions: any) => {
             return actions.order.create({
               purchase_units: [{
-                amount: { value: '5.00', currency_code: 'NZD' },
+                amount: { value: '0.01', currency_code: 'NZD' },
                 description: 'NZ Passport Photo - Compliance Check & Download',
               }],
             });
@@ -427,7 +427,7 @@ const App: React.FC = () => {
 
               <div className="inline-block mb-8 p-6 bg-slate-50 rounded-2xl border border-slate-200">
                 <div className="flex items-baseline justify-center gap-1 mb-4">
-                  <span className="text-4xl font-extrabold text-slate-900">$5.00</span>
+                  <span className="text-4xl font-extrabold text-slate-900">$0.01</span>
                   <span className="text-sm font-bold text-slate-400">NZD</span>
                 </div>
                 <ul className="text-left text-sm text-slate-600 space-y-2 mb-6">
