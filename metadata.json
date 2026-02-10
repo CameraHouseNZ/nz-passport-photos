@@ -1,0 +1,7 @@
+{
+  "name": "NZ Passport.photos",
+  "description": "A professional tool for creating New Zealand passport photos with AI-powered compliance checking, head size validation, and precise cropping according to official standards.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
