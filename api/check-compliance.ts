@@ -27,13 +27,15 @@ function isRateLimited(ip: string): boolean {
 const ALLOWED_ORIGINS = [
   'https://nzpassport.photos',
   'https://www.nzpassport.photos',
-  'https://nz-passport-photos.vercel.app',
   'http://localhost:3000',
 ];
 
 function getAllowedOrigin(origin: string | undefined): string | null {
   if (!origin) return null;
-  return ALLOWED_ORIGINS.includes(origin) ? origin : null;
+  if (ALLOWED_ORIGINS.includes(origin)) return origin;
+  // Allow all Vercel preview/production deployment URLs for this project
+  if (/^https:\/\/nz-passport-photos[a-z0-9-]*\.vercel\.app$/.test(origin)) return origin;
+  return null;
 }
 
 function setCorsHeaders(
