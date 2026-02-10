@@ -18,15 +18,8 @@ function isRateLimited(ip: string): boolean {
   return recent.length > RATE_LIMIT_MAX;
 }
 
-// Periodically prune stale entries so the Map doesn't grow unbounded
-setInterval(() => {
-  const now = Date.now();
-  for (const [ip, hits] of ipHits) {
-    const recent = hits.filter((t) => now - t < RATE_LIMIT_WINDOW_MS);
-    if (recent.length === 0) ipHits.delete(ip);
-    else ipHits.set(ip, recent);
-  }
-}, RATE_LIMIT_WINDOW_MS);
+// Note: no setInterval cleanup needed — serverless instances are short-lived
+// and the Map resets on each cold start.
 
 // ---------------------------------------------------------------------------
 // CORS
@@ -34,6 +27,7 @@ setInterval(() => {
 const ALLOWED_ORIGINS = [
   'https://nzpassport.photos',
   'https://www.nzpassport.photos',
+  'https://nz-passport-photos.vercel.app',
   'http://localhost:3000',
 ];
 
