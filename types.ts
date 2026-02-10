@@ -29,9 +29,16 @@ export interface Area {
   height: number;
 }
 
+export interface PaymentResult {
+  verified: boolean;
+  orderID?: string;
+  error?: string;
+}
+
 export enum AppStep {
   UPLOAD = 'UPLOAD',
   CROP = 'CROP',
   VALIDATE = 'VALIDATE',
+  PAYMENT = 'PAYMENT',
   DOWNLOAD = 'DOWNLOAD'
 }

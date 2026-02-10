@@ -1,9 +1,12 @@
 
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import Cropper from 'react-easy-crop';
 import { Area, AppStep, ComplianceResult, TechnicalResult } from './types';
 import { getCroppedImg } from './utils/imageUtils';
 import { checkPassportCompliance } from './services/geminiService';
+import { loadPayPalSDK, verifyPayment } from './services/paypalService';
+
+const STEPS = [AppStep.UPLOAD, AppStep.CROP, AppStep.VALIDATE, AppStep.PAYMENT, AppStep.DOWNLOAD];
 
 const App: React.FC = () => {
   const [step, setStep] = useState<AppStep>(AppStep.UPLOAD);
@@ -16,10 +19,92 @@ const App: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [compliance, setCompliance] = useState<ComplianceResult | null>(null);
   const [techResult, setTechResult] = useState<TechnicalResult | null>(null);
+  const [paymentVerified, setPaymentVerified] = useState(false);
+  const [paypalReady, setPaypalReady] = useState(false);
+  const [paymentError, setPaymentError] = useState<string | null>(null);
+  const [paymentLoading, setPaymentLoading] = useState(false);
+  const paypalRendered = useRef(false);
 
   const onCropComplete = useCallback((_croppedArea: Area, croppedAreaPixels: Area) => {
     setCroppedAreaPixels(croppedAreaPixels);
   }, []);
+
+  useEffect(() => {
+    if (step !== AppStep.PAYMENT) {
+      paypalRendered.current = false;
+      return;
+    }
+
+    let cancelled = false;
+
+    loadPayPalSDK()
+      .then(() => {
+        if (cancelled) return;
+        setPaypalReady(true);
+
+        if (paypalRendered.current) return;
+        paypalRendered.current = true;
+
+        const paypal = (window as any).paypal;
+        if (!paypal) return;
+
+        paypal.Buttons({
+          createOrder: (_data: any, actions: any) => {
+            return actions.order.create({
+              purchase_units: [{
+                amount: { value: '5.00', currency_code: 'NZD' },
+                description: 'NZ Passport Photo - Compliance Check & Download',
+              }],
+            });
+          },
+          onApprove: async (_data: any, actions: any) => {
+            if (cancelled) return;
+            setPaymentLoading(true);
+            setPaymentError(null);
+            try {
+              const details = await actions.order.capture();
+              const result = await verifyPayment(details.id);
+              if (cancelled) return;
+              if (result.verified) {
+                setPaymentVerified(true);
+                setStep(AppStep.DOWNLOAD);
+              } else {
+                setPaymentError(result.error ?? 'Payment verification failed.');
+              }
+            } catch (err: any) {
+              if (!cancelled) {
+                setPaymentError(err.message ?? 'Payment failed. Please try again.');
+              }
+            } finally {
+              if (!cancelled) setPaymentLoading(false);
+            }
+          },
+          onError: (err: any) => {
+            if (!cancelled) {
+              console.error('PayPal error:', err);
+              setPaymentError('Payment error. Please try again.');
+            }
+          },
+          onCancel: () => {
+            // User closed PayPal popup — do nothing
+          },
+          style: {
+            layout: 'vertical',
+            color: 'blue',
+            shape: 'rect',
+            label: 'paypal' as const,
+          },
+        }).render('#paypal-button-container');
+      })
+      .catch((err: any) => {
+        if (!cancelled) {
+          console.error('Failed to load PayPal:', err);
+          setPaymentError('Failed to load payment system. Please refresh.');
+        }
+      });
+
+    return () => { cancelled = true; };
+  }, [step]);
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
@@ -69,6 +154,11 @@ const App: React.FC = () => {
     setStep(AppStep.UPLOAD);
     setCompliance(null);
     setTechResult(null);
+    setPaymentVerified(false);
+    setPaypalReady(false);
+    setPaymentError(null);
+    setPaymentLoading(false);
+    paypalRendered.current = false;
   };
 
   return (
@@ -97,20 +187,20 @@ const App: React.FC = () => {
       <main className="flex-1 w-full max-w-4xl px-4 py-8">
         {/* Step Indicator */}
         <div className="flex justify-between items-center mb-10 overflow-x-auto pb-4 sm:pb-0">
-          {[AppStep.UPLOAD, AppStep.CROP, AppStep.VALIDATE, AppStep.DOWNLOAD].map((s, i) => (
+          {STEPS.map((s, i) => (
             <div key={s} className="flex items-center">
               <div className={`flex items-center justify-center w-8 h-8 rounded-full text-xs font-bold transition-all duration-300 ${
-                step === s ? 'bg-yellow-400 text-slate-900 shadow-lg ring-4 ring-yellow-50' : 
-                i < [AppStep.UPLOAD, AppStep.CROP, AppStep.VALIDATE, AppStep.DOWNLOAD].indexOf(step) ? 'bg-green-500 text-white' : 'bg-slate-200 text-slate-400'
+                step === s ? 'bg-yellow-400 text-slate-900 shadow-lg ring-4 ring-yellow-50' :
+                i < STEPS.indexOf(step) ? 'bg-green-500 text-white' : 'bg-slate-200 text-slate-400'
               }`}>
-                {i < [AppStep.UPLOAD, AppStep.CROP, AppStep.VALIDATE, AppStep.DOWNLOAD].indexOf(step) ? '✓' : i + 1}
+                {i < STEPS.indexOf(step) ? '✓' : i + 1}
               </div>
               <span className={`ml-2 text-[10px] font-bold uppercase tracking-widest hidden sm:inline ${
                 step === s ? 'text-yellow-600' : 'text-slate-400'
               }`}>
                 {s}
               </span>
-              {i < 3 && <div className="w-8 sm:w-16 h-px bg-slate-200 mx-2" />}
+              {i < STEPS.length - 1 && <div className="w-8 sm:w-16 h-px bg-slate-200 mx-2" />}
             </div>
           ))}
         </div>
@@ -311,7 +401,7 @@ const App: React.FC = () => {
                     </button>
                     {compliance.passed && techResult.sizeValid && (
                       <button
-                        onClick={() => setStep(AppStep.DOWNLOAD)}
+                        onClick={() => setStep(AppStep.PAYMENT)}
                         className="flex-1 bg-yellow-400 hover:bg-yellow-500 text-slate-900 font-bold py-3 px-4 rounded-xl transition-all shadow-lg"
                       >
                         Accept Photo
@@ -323,7 +413,78 @@ const App: React.FC = () => {
             </div>
           )}
 
-          {step === AppStep.DOWNLOAD && croppedImage && (
+          {step === AppStep.PAYMENT && (
+            <div className="p-12 text-center">
+              <div className="w-20 h-20 bg-yellow-50 text-yellow-600 rounded-full flex items-center justify-center mb-6 mx-auto">
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-10 w-10" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+              </div>
+              <h2 className="text-3xl font-extrabold mb-2 text-slate-800">Complete Your Purchase</h2>
+              <p className="text-slate-500 mb-8 max-w-md mx-auto leading-relaxed">
+                Your photo passed all compliance checks. Pay once to download your verified passport photo.
+              </p>
+
+              <div className="inline-block mb-8 p-6 bg-slate-50 rounded-2xl border border-slate-200">
+                <div className="flex items-baseline justify-center gap-1 mb-4">
+                  <span className="text-4xl font-extrabold text-slate-900">$5.00</span>
+                  <span className="text-sm font-bold text-slate-400">NZD</span>
+                </div>
+                <ul className="text-left text-sm text-slate-600 space-y-2 mb-6">
+                  <li className="flex items-center gap-2">
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-green-500 flex-shrink-0" viewBox="0 0 20 20" fill="currentColor">
+                      <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                    </svg>
+                    AI-verified compliant photo
+                  </li>
+                  <li className="flex items-center gap-2">
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-green-500 flex-shrink-0" viewBox="0 0 20 20" fill="currentColor">
+                      <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                    </svg>
+                    Instant high-res download
+                  </li>
+                  <li className="flex items-center gap-2">
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-green-500 flex-shrink-0" viewBox="0 0 20 20" fill="currentColor">
+                      <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                    </svg>
+                    Meets NZ DIA digital standards
+                  </li>
+                </ul>
+
+                {paymentLoading ? (
+                  <div className="flex items-center justify-center gap-3 py-4">
+                    <div className="animate-spin rounded-full h-5 w-5 border-2 border-yellow-500 border-t-transparent" />
+                    <span className="text-sm font-semibold text-slate-600">Verifying payment...</span>
+                  </div>
+                ) : (
+                  <div id="paypal-button-container" className="max-w-[400px] mx-auto" />
+                )}
+
+                {paymentError && (
+                  <div className="mt-4 p-3 bg-red-50 border border-red-200 rounded-xl text-sm text-red-700 font-medium">
+                    {paymentError}
+                  </div>
+                )}
+              </div>
+
+              <div className="flex items-center justify-center gap-6 text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+                <div className="flex items-center gap-1.5">
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                  </svg>
+                  SSL Encrypted
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                  </svg>
+                  PayPal Protected
+                </div>
+              </div>
+            </div>
+          )}
+
+          {step === AppStep.DOWNLOAD && croppedImage && paymentVerified && (
             <div className="p-12 text-center">
               <div className="w-20 h-20 bg-green-50 text-green-600 rounded-full flex items-center justify-center mb-6 mx-auto">
                 <svg xmlns="http://www.w3.org/2000/svg" className="h-10 w-10" fill="none" viewBox="0 0 24 24" stroke="currentColor">
