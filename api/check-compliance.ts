@@ -190,8 +190,9 @@ export default async function handler(
 
     const result = JSON.parse(response.text ?? '{}');
     res.status(200).json(result);
-  } catch (error) {
-    console.error('Gemini API error:', error);
+  } catch (error: any) {
+    console.error('Gemini API error:', error?.message ?? error);
+    console.error('Full error:', JSON.stringify(error, Object.getOwnPropertyNames(error ?? {})));
     res.status(500).json({
       passed: false,
       score: 0,
@@ -203,7 +204,7 @@ export default async function handler(
         sharpness: 'Error',
       },
       feedback:
-        'Failed to connect to AI service for validation. Please try again.',
+        `AI service error: ${error?.message ?? 'Unknown error'}. Please try again.`,
     });
   }
 }
