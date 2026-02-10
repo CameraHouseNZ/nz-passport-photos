@@ -57,13 +57,13 @@ const App: React.FC = () => {
               }],
             });
           },
-          onApprove: async (_data: any, actions: any) => {
+          onApprove: async (data: any) => {
             if (cancelled) return;
             setPaymentLoading(true);
             setPaymentError(null);
             try {
-              const details = await actions.order.capture();
-              const result = await verifyPayment(details.id);
+              // Server captures the payment — don't call actions.order.capture()
+              const result = await verifyPayment(data.orderID);
               if (cancelled) return;
               if (result.verified) {
                 setPaymentVerified(true);

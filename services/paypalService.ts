@@ -37,11 +37,11 @@ export const verifyPayment = async (orderID: string): Promise<PaymentResult> => 
     }
 
     return (await response.json()) as PaymentResult;
-  } catch (error) {
+  } catch (error: any) {
     console.error("Payment verification failed:", error);
     return {
       verified: false,
-      error: "Failed to verify payment. Please contact support.",
+      error: error.message ?? "Failed to verify payment. Please contact support.",
     };
   }
 };

@@ -118,32 +118,34 @@ export default async function handler(
       body: 'grant_type=client_credentials',
     });
 
-    const tokenData = await tokenResponse.json() as { access_token?: string };
+    const tokenData = await tokenResponse.json() as any;
 
     if (!tokenData.access_token) {
-      console.error('Failed to get PayPal access token');
-      res.status(500).json({ verified: false, error: 'Payment service error' });
+      console.error('Failed to get PayPal access token:', JSON.stringify(tokenData));
+      res.status(500).json({ verified: false, error: `PayPal auth failed: ${tokenData.error_description ?? tokenData.error ?? 'unknown'}` });
       return;
     }
 
-    // Verify order status
-    const orderResponse = await fetch(`${baseUrl}/v2/checkout/orders/${orderID}`, {
-      method: 'GET',
+    // Capture the payment server-side
+    const captureResponse = await fetch(`${baseUrl}/v2/checkout/orders/${orderID}/capture`, {
+      method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${tokenData.access_token}`,
       },
     });
 
-    const orderData = await orderResponse.json() as { status?: string };
+    const captureData = await captureResponse.json() as any;
+    console.log('PayPal capture status:', captureData.status, 'orderID:', orderID);
 
-    if (orderData.status === 'COMPLETED') {
+    if (captureData.status === 'COMPLETED') {
       res.status(200).json({ verified: true, orderID });
     } else {
+      console.error('PayPal capture failed:', JSON.stringify(captureData));
       res.status(200).json({
         verified: false,
         orderID,
-        error: `Payment not completed. Status: ${orderData.status ?? 'unknown'}`,
+        error: `Payment capture failed. Status: ${captureData.status ?? 'unknown'}`,
       });
     }
   } catch (error: any) {
