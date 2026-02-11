@@ -4,14 +4,16 @@ import Cropper from 'react-easy-crop';
 import { Area, AppStep, ComplianceResult, TechnicalResult } from './types';
 import { getCroppedImg } from './utils/imageUtils';
 import { checkPassportCompliance } from './services/geminiService';
-import { loadPayPalSDK, verifyPayment } from './services/paypalService';
+import { loadPayPalSDK, verifyPayment, sendDownloadEmail, storePhoto, getDownloadUrl } from './services/paypalService';
 
 const STEPS = [AppStep.UPLOAD, AppStep.CROP, AppStep.VALIDATE, AppStep.PAYMENT, AppStep.DOWNLOAD];
 
 const App: React.FC = () => {
   const [step, setStep] = useState<AppStep>(AppStep.UPLOAD);
   const [image, setImage] = useState<string | null>(null);
-  const [croppedImage, setCroppedImage] = useState<string | null>(null);
+  const [previewImage, setPreviewImage] = useState<string | null>(null);
+  const [photoId, setPhotoId] = useState<string | null>(null);
+  const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
   const [crop, setCrop] = useState({ x: 0, y: 0 });
   const [zoom, setZoom] = useState(1);
   const [rotation, setRotation] = useState(0);
@@ -23,6 +25,8 @@ const App: React.FC = () => {
   const [paypalReady, setPaypalReady] = useState(false);
   const [paymentError, setPaymentError] = useState<string | null>(null);
   const [paymentLoading, setPaymentLoading] = useState(false);
+  const [paidOrderId, setPaidOrderId] = useState<string | null>(null);
+  const [email, setEmail] = useState('');
   const paypalRendered = useRef(false);
 
   const onCropComplete = useCallback((_croppedArea: Area, croppedAreaPixels: Area) => {
@@ -66,6 +70,7 @@ const App: React.FC = () => {
               const result = await verifyPayment(data.orderID);
               if (cancelled) return;
               if (result.verified) {
+                setPaidOrderId(data.orderID);
                 setPaymentVerified(true);
                 setStep(AppStep.DOWNLOAD);
               } else {
@@ -106,6 +111,26 @@ const App: React.FC = () => {
     return () => { cancelled = true; };
   }, [step]);
 
+  // After payment is verified, get download URL and send email
+  useEffect(() => {
+    if (!paymentVerified || !photoId || !paidOrderId) return;
+    let cancelled = false;
+
+    getDownloadUrl(photoId, paidOrderId)
+      .then(({ downloadUrl: url }) => {
+        if (cancelled) return;
+        setDownloadUrl(url);
+        if (email) {
+          sendDownloadEmail(email, photoId, paidOrderId).catch(() => {});
+        }
+      })
+      .catch((err) => {
+        if (!cancelled) console.error('Failed to get download URL:', err);
+      });
+
+    return () => { cancelled = true; };
+  }, [paymentVerified]);
+
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
       const reader = new FileReader();
@@ -121,10 +146,10 @@ const App: React.FC = () => {
     if (!image || !croppedAreaPixels) return;
     setLoading(true);
     try {
-      const { dataUrl, size, width, height } = await getCroppedImg(image, croppedAreaPixels, rotation);
-      setCroppedImage(dataUrl);
-      
-      const fileSizeKb = size / 1024;
+      const { previewUrl, fullDataUrl, fullSizeBytes, width, height } = await getCroppedImg(image, croppedAreaPixels, rotation);
+      setPreviewImage(previewUrl);
+
+      const fileSizeKb = fullSizeBytes / 1024;
       setTechResult({
         fileSizeKb,
         width,
@@ -135,8 +160,12 @@ const App: React.FC = () => {
         formatValid: true
       });
 
-      // AI Facial Compliance Check
-      const result = await checkPassportCompliance(dataUrl);
+      // Upload full-quality image to blob storage (then discard fullDataUrl)
+      const { photoId: id } = await storePhoto(fullDataUrl);
+      setPhotoId(id);
+
+      // AI Facial Compliance Check (uses fullDataUrl, then it goes out of scope)
+      const result = await checkPassportCompliance(fullDataUrl);
       setCompliance(result);
       setStep(AppStep.VALIDATE);
     } catch (err) {
@@ -148,7 +177,9 @@ const App: React.FC = () => {
 
   const reset = () => {
     setImage(null);
-    setCroppedImage(null);
+    setPreviewImage(null);
+    setPhotoId(null);
+    setDownloadUrl(null);
     setRotation(0);
     setZoom(1);
     setStep(AppStep.UPLOAD);
@@ -158,6 +189,8 @@ const App: React.FC = () => {
     setPaypalReady(false);
     setPaymentError(null);
     setPaymentLoading(false);
+    setPaidOrderId(null);
+    setEmail('');
     paypalRendered.current = false;
   };
 
@@ -316,13 +349,13 @@ const App: React.FC = () => {
             </div>
           )}
 
-          {step === AppStep.VALIDATE && croppedImage && techResult && compliance && (
+          {step === AppStep.VALIDATE && previewImage && techResult && compliance && (
             <div className="p-8">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-10">
                 <div className="flex flex-col items-center">
                   <div className="relative group p-2 bg-slate-50 rounded-xl border border-slate-200">
-                    <img 
-                      src={croppedImage} 
+                    <img
+                      src={previewImage}
                       alt="Cropped Passport Photo" 
                       className="w-full max-w-[320px] h-auto rounded-lg shadow-xl" 
                     />
@@ -451,13 +484,30 @@ const App: React.FC = () => {
                   </li>
                 </ul>
 
+                <div className="mb-4">
+                  <label htmlFor="email" className="block text-left text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">
+                    Email for receipt & photo delivery
+                  </label>
+                  <input
+                    id="email"
+                    type="email"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    placeholder="you@example.com"
+                    className="w-full px-4 py-3 border border-slate-200 rounded-xl text-sm text-slate-800 placeholder-slate-300 focus:outline-none focus:ring-2 focus:ring-yellow-400 focus:border-transparent transition-all"
+                  />
+                </div>
+
                 {paymentLoading ? (
                   <div className="flex items-center justify-center gap-3 py-4">
                     <div className="animate-spin rounded-full h-5 w-5 border-2 border-yellow-500 border-t-transparent" />
                     <span className="text-sm font-semibold text-slate-600">Verifying payment...</span>
                   </div>
                 ) : (
-                  <div id="paypal-button-container" className="max-w-[400px] mx-auto" />
+                  <div
+                    id="paypal-button-container"
+                    className={`max-w-[400px] mx-auto transition-opacity ${!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? 'opacity-50 pointer-events-none' : ''}`}
+                  />
                 )}
 
                 {paymentError && (
@@ -484,7 +534,7 @@ const App: React.FC = () => {
             </div>
           )}
 
-          {step === AppStep.DOWNLOAD && croppedImage && paymentVerified && (
+          {step === AppStep.DOWNLOAD && paymentVerified && (
             <div className="p-12 text-center">
               <div className="w-20 h-20 bg-green-50 text-green-600 rounded-full flex items-center justify-center mb-6 mx-auto">
                 <svg xmlns="http://www.w3.org/2000/svg" className="h-10 w-10" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -496,24 +546,45 @@ const App: React.FC = () => {
                 Your photo meets technical and facial standards for a digital New Zealand passport application at <span className="text-yellow-600 font-bold italic">nzpassport.photos</span>.
               </p>
               
-              <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
-                <a
-                  href={croppedImage}
-                  download="nz_passport_photo.jpg"
-                  className="w-full sm:w-auto bg-yellow-400 hover:bg-yellow-500 text-slate-900 font-bold py-4 px-12 rounded-2xl transition-all shadow-xl active:scale-95 flex items-center justify-center gap-3"
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                  </svg>
-                  Download .jpg
-                </a>
-                <button
-                  onClick={reset}
-                  className="w-full sm:w-auto bg-slate-50 hover:bg-slate-100 text-slate-600 font-bold py-4 px-12 rounded-2xl transition-all active:scale-95 border border-slate-200"
-                >
-                  Start New Photo
-                </button>
-              </div>
+              {!downloadUrl ? (
+                <div className="flex items-center justify-center gap-3 py-8">
+                  <div className="animate-spin rounded-full h-6 w-6 border-2 border-yellow-500 border-t-transparent" />
+                  <span className="text-sm font-semibold text-slate-600">Preparing your photo...</span>
+                </div>
+              ) : (
+                <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
+                  <button
+                    onClick={async () => {
+                      try {
+                        const resp = await fetch(downloadUrl);
+                        const blob = await resp.blob();
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = 'nz_passport_photo.jpg';
+                        document.body.appendChild(a);
+                        a.click();
+                        document.body.removeChild(a);
+                        URL.revokeObjectURL(url);
+                      } catch (err) {
+                        console.error('Download failed:', err);
+                      }
+                    }}
+                    className="w-full sm:w-auto bg-yellow-400 hover:bg-yellow-500 text-slate-900 font-bold py-4 px-12 rounded-2xl transition-all shadow-xl active:scale-95 flex items-center justify-center gap-3"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                    </svg>
+                    Download .jpg
+                  </button>
+                  <button
+                    onClick={reset}
+                    className="w-full sm:w-auto bg-slate-50 hover:bg-slate-100 text-slate-600 font-bold py-4 px-12 rounded-2xl transition-all active:scale-95 border border-slate-200"
+                  >
+                    Start New Photo
+                  </button>
+                </div>
+              )}
 
               <div className="mt-12 p-6 bg-yellow-50/30 rounded-2xl border border-yellow-100 text-left">
                 <h4 className="text-xs font-bold text-yellow-700 uppercase tracking-widest mb-3 flex items-center gap-2">

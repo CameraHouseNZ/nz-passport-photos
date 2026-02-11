@@ -1,4 +1,4 @@
-import { PaymentResult } from "../types";
+import { PaymentResult, EmailResult, PhotoStoreResult, DownloadResult } from "../types";
 
 const PAYPAL_CLIENT_ID = "AYy70D-17yXeQstNhCE6rqzF2kHmE_JIovu0Hvualqj056Mn6na4qGlqrrwS5JuUrvd0NmOJdi-GLxlc";
 
@@ -43,5 +43,62 @@ export const verifyPayment = async (orderID: string): Promise<PaymentResult> => 
       verified: false,
       error: error.message ?? "Failed to verify payment. Please contact support.",
     };
+  }
+};
+
+export const storePhoto = async (image: string): Promise<PhotoStoreResult> => {
+  const response = await fetch("/api/store-photo", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ image }),
+  });
+
+  if (!response.ok) {
+    const errorBody = await response.json().catch(() => ({}));
+    throw new Error(errorBody.error ?? `Server error: ${response.status}`);
+  }
+
+  return (await response.json()) as PhotoStoreResult;
+};
+
+export const getDownloadUrl = async (
+  photoId: string,
+  orderID: string,
+): Promise<DownloadResult> => {
+  const response = await fetch("/api/download-photo", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ photoId, orderID }),
+  });
+
+  if (!response.ok) {
+    const errorBody = await response.json().catch(() => ({}));
+    throw new Error(errorBody.error ?? `Server error: ${response.status}`);
+  }
+
+  return (await response.json()) as DownloadResult;
+};
+
+export const sendDownloadEmail = async (
+  email: string,
+  photoId: string,
+  orderID: string,
+): Promise<EmailResult> => {
+  try {
+    const response = await fetch("/api/send-download-email", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, photoId, orderID }),
+    });
+
+    if (!response.ok) {
+      const errorBody = await response.json().catch(() => ({}));
+      return { sent: false, error: errorBody.error ?? `Server error: ${response.status}` };
+    }
+
+    return (await response.json()) as EmailResult;
+  } catch (error: any) {
+    console.error("Email send failed:", error);
+    return { sent: false, error: error.message ?? "Failed to send email." };
   }
 };

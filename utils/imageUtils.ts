@@ -10,65 +10,100 @@ export const createImage = (url: string): Promise<HTMLImageElement> =>
     image.src = url;
   });
 
-export const getCroppedImg = async (
-  imageSrc: string,
+// NZ Passport digital requirement: 900-4500px wide, 1200-6000px high (3:4 ratio)
+// Target 1500x2000px for high quality within range
+const TARGET_WIDTH = 1500;
+const TARGET_HEIGHT = 2000;
+
+function drawCroppedImage(
+  ctx: CanvasRenderingContext2D,
+  image: HTMLImageElement,
   pixelCrop: Area,
-  rotation: number = 0
-): Promise<{ dataUrl: string; size: number; width: number; height: number }> => {
-  const image = await createImage(imageSrc);
-  const canvas = document.createElement('canvas');
-  const ctx = canvas.getContext('2d');
-
-  if (!ctx) throw new Error('Could not get canvas context');
-
-  // NZ Passport digital requirement: 900-4500px wide, 1200-6000px high (3:4 ratio)
-  // We'll target 1500x2000px to ensure high quality and stay safely within the range
-  const targetWidth = 1500;
-  const targetHeight = 2000;
-
-  canvas.width = targetWidth;
-  canvas.height = targetHeight;
+  rotation: number,
+): void {
+  const scaleX = TARGET_WIDTH / pixelCrop.width;
+  const scaleY = TARGET_HEIGHT / pixelCrop.height;
 
   ctx.save();
-  
-  // Create a translation/rotation matrix to handle the cropping of a rotated image
-  const scaleX = targetWidth / pixelCrop.width;
-  const scaleY = targetHeight / pixelCrop.height;
-
-  // Move the context to the center of our target canvas
-  ctx.translate(targetWidth / 2, targetHeight / 2);
-  // Apply rotation
+  ctx.translate(TARGET_WIDTH / 2, TARGET_HEIGHT / 2);
   ctx.rotate((rotation * Math.PI) / 180);
-  // Scale to fit the crop area into our target dimensions
   ctx.scale(scaleX, scaleY);
-  // Move back by the center of the crop area
   ctx.translate(
     -(pixelCrop.x + pixelCrop.width / 2),
     -(pixelCrop.y + pixelCrop.height / 2)
   );
-
-  // Draw the original image. The transformation matrix handles the crop + rotation.
   ctx.drawImage(image, 0, 0);
   ctx.restore();
+}
 
+function addWatermark(ctx: CanvasRenderingContext2D): void {
+  ctx.save();
+  ctx.globalAlpha = 0.15;
+  ctx.fillStyle = '#888888';
+  ctx.font = 'bold 100px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.translate(TARGET_WIDTH / 2, TARGET_HEIGHT / 2);
+  ctx.rotate(-Math.PI / 6);
+  ctx.fillText('PREVIEW', 0, -100);
+  ctx.fillText('PREVIEW', 0, 100);
+  ctx.restore();
+}
+
+function canvasToBlob(canvas: HTMLCanvasElement, quality: number): Promise<Blob> {
   return new Promise((resolve) => {
-    // NZ requires JPEG format. We use high quality (0.95) to ensure it stays > 250KB
     canvas.toBlob(
       (blob) => {
         if (!blob) throw new Error('Canvas is empty');
-        const reader = new FileReader();
-        reader.readAsDataURL(blob);
-        reader.onloadend = () => {
-          resolve({
-            dataUrl: reader.result as string,
-            size: blob.size,
-            width: targetWidth,
-            height: targetHeight
-          });
-        };
+        resolve(blob);
       },
       'image/jpeg',
-      0.95
+      quality,
     );
   });
+}
+
+function blobToDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onloadend = () => resolve(reader.result as string);
+    reader.readAsDataURL(blob);
+  });
+}
+
+/**
+ * Generate a watermarked preview image, full-quality data URL, and file size stats.
+ * The caller should upload fullDataUrl to the server then discard it.
+ * The previewUrl contains a visible watermark and is NOT suitable for final download.
+ */
+export const getCroppedImg = async (
+  imageSrc: string,
+  pixelCrop: Area,
+  rotation: number = 0
+): Promise<{ previewUrl: string; fullDataUrl: string; fullSizeBytes: number; width: number; height: number }> => {
+  const image = await createImage(imageSrc);
+  const canvas = document.createElement('canvas');
+  const ctx = canvas.getContext('2d');
+  if (!ctx) throw new Error('Could not get canvas context');
+
+  canvas.width = TARGET_WIDTH;
+  canvas.height = TARGET_HEIGHT;
+
+  // Draw cropped image (clean) to get full-quality data URL
+  drawCroppedImage(ctx, image, pixelCrop, rotation);
+  const fullBlob = await canvasToBlob(canvas, 0.95);
+  const fullDataUrl = await blobToDataUrl(fullBlob);
+
+  // Add watermark over the image for preview
+  addWatermark(ctx);
+  const previewBlob = await canvasToBlob(canvas, 0.7);
+  const previewUrl = await blobToDataUrl(previewBlob);
+
+  return {
+    previewUrl,
+    fullDataUrl,
+    fullSizeBytes: fullBlob.size,
+    width: TARGET_WIDTH,
+    height: TARGET_HEIGHT,
+  };
 };

@@ -35,6 +35,19 @@ export interface PaymentResult {
   error?: string;
 }
 
+export interface EmailResult {
+  sent: boolean;
+  error?: string;
+}
+
+export interface PhotoStoreResult {
+  photoId: string;
+}
+
+export interface DownloadResult {
+  downloadUrl: string;
+}
+
 export enum AppStep {
   UPLOAD = 'UPLOAD',
   CROP = 'CROP',
