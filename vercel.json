@@ -1,6 +1,12 @@
 {
   "framework": "vite",
   "outputDirectory": "dist",
+  "crons": [
+    {
+      "path": "/api/cleanup-photos",
+      "schedule": "0 3 * * *"
+    }
+  ],
   "functions": {
     "api/*.ts": {
       "maxDuration": 30
